@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "release_artifacts_version_build_unique" ON "release_artifacts" USING btree ("version","build");

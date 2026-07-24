@@ -1,0 +1,44 @@
+name: Native CI
+
+on:
+  pull_request:
+    paths:
+      - "Klipt/**"
+      - "KliptTests/**"
+      - "Klipt.xcodeproj/**"
+      - ".github/workflows/native-ci.yml"
+  push:
+    branches: [main, feature/native-mvp]
+    paths:
+      - "Klipt/**"
+      - "KliptTests/**"
+      - "Klipt.xcodeproj/**"
+      - ".github/workflows/native-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: >-
+          xcodebuild
+          -project Klipt.xcodeproj
+          -scheme Klipt
+          -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath "$RUNNER_TEMP/KliptDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          test
+      - name: Build unsigned Release
+        run: >-
+          xcodebuild
+          -project Klipt.xcodeproj
+          -scheme Klipt
+          -configuration Release
+          -destination 'generic/platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/KliptReleaseData"
+          CODE_SIGNING_ALLOWED=NO
+          build
