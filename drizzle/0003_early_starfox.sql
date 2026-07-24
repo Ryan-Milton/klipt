@@ -1,0 +1,1 @@
+ALTER TABLE "download_grants" ADD COLUMN "encrypted_token" text NOT NULL;
