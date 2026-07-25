@@ -5,6 +5,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "@/server/env";
 
 const SIGNATURE_TOLERANCE_SECONDS = 300;
+const REQUEST_TIMEOUT_MS = 10_000;
+const KLIPT_PRODUCT_MARKER = "klipt_macos_lifetime";
 
 export type PaddleEvent = {
   event_id: string;
@@ -41,6 +43,7 @@ export async function getPaddleCustomerEmail(customerId: string) {
   const response = await fetch(`${config.PADDLE_API_BASE}/customers/${customerId}`, {
     headers: { Authorization: `Bearer ${config.PADDLE_API_KEY}` },
     cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Paddle customer request failed (${response.status})`);
   const payload = (await response.json()) as { data?: { email?: string } };
@@ -48,9 +51,53 @@ export async function getPaddleCustomerEmail(customerId: string) {
   return payload.data.email.toLowerCase();
 }
 
+export async function getPaddleTransaction(transactionId: string) {
+  const config = env.paddle();
+  const response = await fetch(
+    `${config.PADDLE_API_BASE}/transactions/${encodeURIComponent(transactionId)}`,
+    {
+      headers: { Authorization: `Bearer ${config.PADDLE_API_KEY}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+  if (!response.ok) throw new Error(`Paddle transaction request failed (${response.status})`);
+  const payload = (await response.json()) as { data?: unknown };
+  if (!isRecord(payload.data)) throw new Error("Paddle transaction response is invalid");
+  return payload.data;
+}
+
+export function isKliptTransaction(data: Record<string, unknown>, priceId: string) {
+  if (!Array.isArray(data.items)) throw new Error("Paddle transaction items are invalid");
+  if (data.items.length === 0) throw new Error("Paddle transaction has no items");
+  if (data.custom_data != null && !isRecord(data.custom_data)) {
+    throw new Error("Paddle transaction custom data is invalid");
+  }
+  const customData = isRecord(data.custom_data) ? data.custom_data : null;
+  const hasMarker = customData?.product === KLIPT_PRODUCT_MARKER;
+  const hasPrice = data.items.some((value) => {
+    if (!isRecord(value)) throw new Error("Paddle transaction item is invalid");
+    const price = isRecord(value.price) ? value.price : null;
+    const itemPriceId = value.price_id ?? price?.id;
+    if (typeof itemPriceId !== "string" || !itemPriceId) {
+      throw new Error("Paddle transaction item has no price ID");
+    }
+    return itemPriceId === priceId;
+  });
+  if (hasMarker !== hasPrice) {
+    throw new Error("Paddle transaction has inconsistent Klipt product metadata");
+  }
+  return hasMarker;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function sanitizePaddleEvent(event: PaddleEvent): PaddleEvent {
   const data = event.data;
   const customer = (data.customer as Record<string, unknown> | undefined) ?? {};
+  const customData = isRecord(data.custom_data) ? data.custom_data : {};
   const details = (data.details as Record<string, unknown> | undefined) ?? {};
   const items = Array.isArray(data.items)
     ? data.items.map((value) => {
@@ -72,7 +119,7 @@ export function sanitizePaddleEvent(event: PaddleEvent): PaddleEvent {
       details: { totals: details.totals },
       transaction_id: data.transaction_id,
       action: data.action,
-      custom_data: data.custom_data,
+      custom_data: { product: customData.product },
       items,
     },
   };

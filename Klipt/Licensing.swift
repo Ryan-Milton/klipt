@@ -177,7 +177,7 @@ protocol LicenseAPIClient: Sendable {
 }
 
 final class FirstPartyLicenseAPI: LicenseAPIClient, @unchecked Sendable {
-    private let baseURL = URL(string: "https://klipt.dev/api/licenses/")!
+    private let baseURL = URL(string: "https://www.klipt.dev/api/licenses/")!
     private let session: URLSession
 
     init(session: URLSession? = nil) {
@@ -458,6 +458,6 @@ enum DeviceInformation {
 }
 
 enum LicensingLinks {
-    static let buy = URL(string: "https://klipt.dev/buy")!
-    static let support = URL(string: "https://klipt.dev/support")!
+    static let buy = URL(string: "https://www.klipt.dev/buy")!
+    static let support = URL(string: "https://www.klipt.dev/support")!
 }

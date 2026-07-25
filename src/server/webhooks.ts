@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db/client";
 import {
@@ -21,7 +21,13 @@ import {
   hashSecret,
 } from "@/server/crypto";
 import { env } from "@/server/env";
-import { getPaddleCustomerEmail, mapPaddleOutcome, type PaddleEvent } from "@/server/paddle";
+import {
+  getPaddleCustomerEmail,
+  getPaddleTransaction,
+  isKliptTransaction,
+  mapPaddleOutcome,
+  type PaddleEvent,
+} from "@/server/paddle";
 import { fulfillmentEmail, sendTrackedEmail } from "@/server/resend";
 
 function stringValue(value: unknown) {
@@ -35,15 +41,14 @@ function minorTotal(data: Record<string, unknown>) {
   return total && /^\d+$/.test(total) ? Number(total) : null;
 }
 
+function eventOccurredAt(event: PaddleEvent) {
+  const value = new Date(event.occurred_at);
+  if (Number.isNaN(value.getTime())) throw new Error("Paddle event timestamp is invalid");
+  return value;
+}
+
 async function processCompletion(event: PaddleEvent) {
-  const customData = event.data.custom_data as Record<string, unknown> | undefined;
-  const items = Array.isArray(event.data.items)
-    ? (event.data.items as Array<Record<string, unknown>>)
-    : [];
-  if (
-    customData?.product !== "klipt_macos_lifetime" ||
-    !items.some((item) => item.price_id === env.paddle().PADDLE_PRICE_ID)
-  ) {
+  if (!isKliptTransaction(event.data, env.paddle().PADDLE_PRICE_ID)) {
     throw new Error("Completion event does not match the configured Klipt product and price");
   }
   const transactionId = stringValue(event.data.id);
@@ -86,7 +91,8 @@ async function processCompletion(event: PaddleEvent) {
         status: "completed",
         currencyCode: stringValue(event.data.currency_code),
         totalMinor: minorTotal(event.data),
-        occurredAt: new Date(event.occurred_at),
+        occurredAt: eventOccurredAt(event),
+        statusOccurredAt: eventOccurredAt(event),
       })
       .onConflictDoNothing()
       .returning();
@@ -115,6 +121,7 @@ async function processCompletion(event: PaddleEvent) {
         transactionId: transaction.id,
         keyHash: hashSecret(licenseKey),
         encryptedKey: encryptLicenseKey(licenseKey),
+        statusOccurredAt: eventOccurredAt(event),
       })
       .returning();
   } else {
@@ -122,7 +129,7 @@ async function processCompletion(event: PaddleEvent) {
   }
 
   const [latestTransaction] = await db
-    .select({ status: transactions.status })
+    .select({ status: transactions.status, statusOccurredAt: transactions.statusOccurredAt })
     .from(transactions)
     .where(eq(transactions.id, transaction.id))
     .limit(1);
@@ -132,11 +139,17 @@ async function processCompletion(event: PaddleEvent) {
       .update(licenses)
       .set({
         status: latestTransaction.status === "refunded" ? "refunded" : "revoked",
+        statusOccurredAt: latestTransaction.statusOccurredAt,
         revokedReason:
           latestTransaction.status === "disputed" ? "Paddle dispute or chargeback" : null,
         updatedAt: new Date(),
       })
-      .where(eq(licenses.id, license.id));
+      .where(
+        and(
+          eq(licenses.id, license.id),
+          lte(licenses.statusOccurredAt, latestTransaction.statusOccurredAt),
+        ),
+      );
     return;
   }
 
@@ -185,63 +198,171 @@ async function processAdverseOutcome(event: PaddleEvent, outcome: "refunded" | "
   const transactionId = stringValue(event.data.transaction_id) ?? stringValue(event.data.id);
   if (!transactionId) throw new Error("Adverse event lacks a transaction ID");
   const db = getDb();
+  const occurredAt = eventOccurredAt(event);
+  const transactionConditions = [eq(transactions.paddleTransactionId, transactionId)];
+  if (outcome === "disputed") {
+    transactionConditions.push(
+      ne(transactions.status, "refunded"),
+      lte(transactions.statusOccurredAt, occurredAt),
+    );
+  }
   const [transaction] = await db
     .update(transactions)
-    .set({ status: outcome, updatedAt: new Date() })
-    .where(eq(transactions.paddleTransactionId, transactionId))
+    .set({ status: outcome, statusOccurredAt: occurredAt, updatedAt: new Date() })
+    .where(and(...transactionConditions))
     .returning({ id: transactions.id });
-  if (!transaction) throw new Error("Purchase transaction is not available yet; retry this event");
+  if (!transaction) {
+    const [existing] = await db
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(eq(transactions.paddleTransactionId, transactionId))
+      .limit(1);
+    if (existing) return;
+    throw new Error("Purchase transaction is not available yet; retry this event");
+  }
+  const licenseConditions = [eq(licenses.transactionId, transaction.id)];
+  if (outcome === "disputed") {
+    licenseConditions.push(
+      ne(licenses.status, "refunded"),
+      lte(licenses.statusOccurredAt, occurredAt),
+      or(
+        eq(licenses.status, "active"),
+        eq(licenses.revokedReason, "Paddle dispute or chargeback"),
+      )!,
+    );
+  }
   const [license] = await db
     .update(licenses)
     .set({
       status: outcome === "refunded" ? "refunded" : "revoked",
+      statusOccurredAt: occurredAt,
       revokedReason: outcome === "disputed" ? "Paddle dispute or chargeback" : null,
       updatedAt: new Date(),
     })
-    .where(eq(licenses.transactionId, transaction.id))
+    .where(and(...licenseConditions))
     .returning({ id: licenses.id });
-  if (!license) throw new Error("Purchase license is not available yet; retry this event");
+  if (!license) {
+    const [existing] = await db
+      .select({ id: licenses.id })
+      .from(licenses)
+      .where(eq(licenses.transactionId, transaction.id))
+      .limit(1);
+    if (existing) return;
+    throw new Error("Purchase license is not available yet; retry this event");
+  }
 }
 
 async function processRestoredOutcome(event: PaddleEvent) {
   const transactionId = stringValue(event.data.transaction_id) ?? stringValue(event.data.id);
   if (!transactionId) throw new Error("Restored dispute event lacks a transaction ID");
   const db = getDb();
+  const occurredAt = eventOccurredAt(event);
   const [transaction] = await db
     .update(transactions)
-    .set({ status: "completed", updatedAt: new Date() })
-    .where(eq(transactions.paddleTransactionId, transactionId))
+    .set({ status: "completed", statusOccurredAt: occurredAt, updatedAt: new Date() })
+    .where(
+      and(
+        eq(transactions.paddleTransactionId, transactionId),
+        ne(transactions.status, "refunded"),
+        lte(transactions.statusOccurredAt, occurredAt),
+      ),
+    )
     .returning({ id: transactions.id });
-  if (!transaction) throw new Error("Purchase transaction is not available yet; retry this event");
-  await db
+  if (!transaction) {
+    const [existing] = await db
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(eq(transactions.paddleTransactionId, transactionId))
+      .limit(1);
+    if (existing) return;
+    throw new Error("Purchase transaction is not available yet; retry this event");
+  }
+  const [license] = await db
     .update(licenses)
-    .set({ status: "active", revokedReason: null, updatedAt: new Date() })
+    .set({
+      status: "active",
+      statusOccurredAt: occurredAt,
+      revokedReason: null,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(licenses.transactionId, transaction.id),
-        eq(licenses.revokedReason, "Paddle dispute or chargeback"),
+        lte(licenses.statusOccurredAt, occurredAt),
+        or(
+          eq(licenses.status, "active"),
+          eq(licenses.revokedReason, "Paddle dispute or chargeback"),
+        ),
+      ),
+    )
+    .returning({ id: licenses.id });
+  if (!license) {
+    const [existing] = await db
+      .select({ id: licenses.id })
+      .from(licenses)
+      .where(eq(licenses.transactionId, transaction.id))
+      .limit(1);
+    if (existing) return;
+    throw new Error("Purchase license is not available yet; retry this event");
+  }
+}
+
+async function eventBelongsToKlipt(
+  event: PaddleEvent,
+  outcome: NonNullable<ReturnType<typeof mapPaddleOutcome>>,
+) {
+  const priceId = env.paddle().PADDLE_PRICE_ID;
+  if (outcome === "completed") return isKliptTransaction(event.data, priceId);
+
+  const transactionId = stringValue(event.data.transaction_id) ?? stringValue(event.data.id);
+  if (!transactionId) throw new Error("Paddle adjustment lacks a transaction ID");
+  const [localTransaction] = await getDb()
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.paddleTransactionId, transactionId))
+    .limit(1);
+  if (localTransaction) return true;
+
+  return isKliptTransaction(await getPaddleTransaction(transactionId), priceId);
+}
+
+async function markWebhookProcessed(webhookId: string, claimStartedAt: Date) {
+  await getDb()
+    .update(webhookEvents)
+    .set({
+      status: "processed",
+      processedAt: new Date(),
+      lastError: null,
+      attemptCount: sql`${webhookEvents.attemptCount} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(webhookEvents.id, webhookId),
+        eq(webhookEvents.status, "pending"),
+        eq(webhookEvents.updatedAt, claimStartedAt),
       ),
     );
 }
 
-export async function processWebhookEvent(webhookId: string, event: PaddleEvent) {
+export async function processWebhookEvent(
+  webhookId: string,
+  event: PaddleEvent,
+  claimStartedAt: Date,
+) {
   const outcome = mapPaddleOutcome(event.event_type, event.data);
   try {
+    if (!outcome || !(await eventBelongsToKlipt(event, outcome))) {
+      await markWebhookProcessed(webhookId, claimStartedAt);
+      return "ignored" as const;
+    }
     if (outcome === "completed") await processCompletion(event);
     if (outcome === "refunded" || outcome === "disputed") {
       await processAdverseOutcome(event, outcome);
     }
     if (outcome === "restored") await processRestoredOutcome(event);
-    await getDb()
-      .update(webhookEvents)
-      .set({
-        status: "processed",
-        processedAt: new Date(),
-        lastError: null,
-        attemptCount: sql`${webhookEvents.attemptCount} + 1`,
-        updatedAt: new Date(),
-      })
-      .where(eq(webhookEvents.id, webhookId));
+    await markWebhookProcessed(webhookId, claimStartedAt);
+    return "processed" as const;
   } catch (error) {
     await getDb()
       .update(webhookEvents)
@@ -252,7 +373,13 @@ export async function processWebhookEvent(webhookId: string, event: PaddleEvent)
         attemptCount: sql`${webhookEvents.attemptCount} + 1`,
         updatedAt: new Date(),
       })
-      .where(eq(webhookEvents.id, webhookId));
+      .where(
+        and(
+          eq(webhookEvents.id, webhookId),
+          eq(webhookEvents.status, "pending"),
+          eq(webhookEvents.updatedAt, claimStartedAt),
+        ),
+      );
     throw error;
   }
 }

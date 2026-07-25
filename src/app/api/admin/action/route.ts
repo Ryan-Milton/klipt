@@ -111,7 +111,12 @@ export async function POST(request: Request) {
     if (input.action === "revoke") {
       await db
         .update(licenses)
-        .set({ status: "revoked", revokedReason: input.reason, updatedAt: new Date() })
+        .set({
+          status: "revoked",
+          statusOccurredAt: new Date(),
+          revokedReason: input.reason,
+          updatedAt: new Date(),
+        })
         .where(eq(licenses.id, input.licenseId));
     } else if (input.action === "unrevoke") {
       const [licenseState] = await db
@@ -129,7 +134,12 @@ export async function POST(request: Request) {
       }
       const [changed] = await db
         .update(licenses)
-        .set({ status: "active", revokedReason: null, updatedAt: new Date() })
+        .set({
+          status: "active",
+          statusOccurredAt: new Date(),
+          revokedReason: null,
+          updatedAt: new Date(),
+        })
         .where(and(eq(licenses.id, input.licenseId), eq(licenses.status, "revoked")))
         .returning({ id: licenses.id });
       if (!changed) throw new Error("Only a revoked license can be unrevoked");
@@ -142,13 +152,18 @@ export async function POST(request: Request) {
     } else if (input.action === "resend") {
       await reissueUnusedGrant(input.licenseId);
     } else {
+      const claimStartedAt = new Date();
       const [webhook] = await db
-        .select()
-        .from(webhookEvents)
+        .update(webhookEvents)
+        .set({ status: "pending", lastError: null, updatedAt: claimStartedAt })
         .where(and(eq(webhookEvents.id, input.webhookId), eq(webhookEvents.status, "failed")))
-        .limit(1);
+        .returning();
       if (!webhook) throw new Error("Only failed webhooks can be retried");
-      await processWebhookEvent(webhook.id, webhook.sanitizedPayload as PaddleEvent);
+      await processWebhookEvent(
+        webhook.id,
+        webhook.sanitizedPayload as PaddleEvent,
+        claimStartedAt,
+      );
     }
     return NextResponse.redirect(new URL("/admin?result=success", request.url), 303);
   } catch (error) {
