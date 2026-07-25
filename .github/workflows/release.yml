@@ -25,6 +25,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Validate release ref
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Production releases must be dispatched from main."
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -174,6 +180,8 @@ jobs:
             "$UPDATE_ZIP" \
             "$ARTIFACT_PATH/appcast.xml"
           "$SIGN_TOOL" --ed-key-file "$RUNNER_TEMP/sparkle-private-key" "$ARTIFACT_PATH/appcast.xml" >/dev/null
+          # Appcast XML embeds its signature; Sparkle rejects a separate signature argument for feeds.
+          "$SIGN_TOOL" --ed-key-file "$RUNNER_TEMP/sparkle-private-key" --verify "$ARTIFACT_PATH/appcast.xml"
 
       - name: Upload immutable artifacts to R2
         env:
@@ -216,12 +224,11 @@ jobs:
             -d "{\"version\":\"$VERSION\",\"build\":\"$BUILD_NUMBER\",\"r2ObjectKey\":\"releases/Klipt-$VERSION-$BUILD_NUMBER.dmg\",\"sha256\":\"$SHA256\",\"sizeBytes\":$SIZE_BYTES}" \
             https://www.klipt.dev/api/admin/releases
 
-      - name: Create draft GitHub release
+      - name: Create draft GitHub release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "v$VERSION-build.$BUILD_NUMBER"
-          "$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
           --target "$GITHUB_SHA"
           --title "Klipt $VERSION ($BUILD_NUMBER)"
           --draft
