@@ -7,6 +7,9 @@ on:
       - "KliptTests/**"
       - "Klipt.xcodeproj/**"
       - ".github/workflows/native-ci.yml"
+      - ".github/workflows/release.yml"
+      - "scripts/ExportOptions.plist"
+      - "scripts/create-appcast.mjs"
   push:
     branches: [main, feature/native-mvp]
     paths:
@@ -14,6 +17,9 @@ on:
       - "KliptTests/**"
       - "Klipt.xcodeproj/**"
       - ".github/workflows/native-ci.yml"
+      - ".github/workflows/release.yml"
+      - "scripts/ExportOptions.plist"
+      - "scripts/create-appcast.mjs"
 
 permissions:
   contents: read

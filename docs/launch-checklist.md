@@ -5,9 +5,8 @@ fulfillment, activation, and release publishing require the following setup.
 
 ## 1. Git and Vercel
 
-- Commit the native baseline on `feature/native-mvp`, merge it into `main`, and
-  resolve the worktrees before deploying. The root web and Xcode projects are
-  intentionally one repository.
+- Use pull requests into `main` for web, native, and release-infrastructure
+  changes. The root web and Xcode projects intentionally share one repository.
 - Create a Vercel project for `Ryan-Milton/klipt`, deploy `main`, and attach
   `klipt.dev` and `www.klipt.dev`.
 - Copy every variable from `.env.example` into Vercel Production. Use separate
@@ -106,7 +105,8 @@ Run the `Release Klipt` workflow manually with a semantic version and a
 monotonically increasing build number. It tests, archives, signs, notarizes,
 staples, verifies the Sparkle keypair, signs the archive and feed, uploads
 immutable version/build artifacts, registers the private installer, publishes
-the appcast, and creates a GitHub release.
+the signed appcast, and creates public GitHub release notes without attaching
+the paid DMG.
 
 ## 8. Final acceptance
 
