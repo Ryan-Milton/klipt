@@ -1,7 +1,27 @@
 import { createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { mapPaddleOutcome, sanitizePaddleEvent, verifyPaddleSignature } from "./paddle";
+import {
+  getPaddleTransaction,
+  isKliptTransaction,
+  mapPaddleOutcome,
+  sanitizePaddleEvent,
+  verifyPaddleSignature,
+} from "./paddle";
+
+const originalPaddleEnv = {
+  PADDLE_API_KEY: process.env.PADDLE_API_KEY,
+  PADDLE_PRICE_ID: process.env.PADDLE_PRICE_ID,
+  PADDLE_API_BASE: process.env.PADDLE_API_BASE,
+};
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  for (const [key, value] of Object.entries(originalPaddleEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 describe("Paddle webhooks", () => {
   it("verifies a current raw-body signature", () => {
@@ -47,10 +67,74 @@ describe("Paddle webhooks", () => {
         id: "txn_1",
         card_number: "secret",
         customer: { email: "a@example.com" },
+        custom_data: { product: "klipt_macos_lifetime", private_note: "secret" },
         items: [{ price: { id: "pri_1", name: "Private internal name" } }],
       },
     });
     expect(JSON.stringify(event)).not.toContain("card_number");
+    expect(JSON.stringify(event)).not.toContain("private_note");
+    expect(event.data.custom_data).toEqual({ product: "klipt_macos_lifetime" });
     expect(event.data.items).toEqual([{ price_id: "pri_1" }]);
+  });
+
+  it("distinguishes Klipt transactions from other products in the shared account", () => {
+    const transaction = {
+      custom_data: { product: "klipt_macos_lifetime" },
+      items: [{ price: { id: "pri_klipt" } }],
+    };
+    expect(isKliptTransaction(transaction, "pri_klipt")).toBe(true);
+    expect(
+      isKliptTransaction(
+        {
+          custom_data: { product: "knosys_lifetime" },
+          items: [{ price: { id: "pri_knosys" } }],
+        },
+        "pri_klipt",
+      ),
+    ).toBe(false);
+    expect(() => isKliptTransaction(transaction, "pri_knosys")).toThrow(
+      "inconsistent Klipt product metadata",
+    );
+    expect(() => isKliptTransaction({ items: [{ price_id: "pri_klipt" }] }, "pri_klipt")).toThrow(
+      "inconsistent Klipt product metadata",
+    );
+    expect(() => isKliptTransaction({ custom_data: null, items: [] }, "pri_klipt")).toThrow(
+      "Paddle transaction has no items",
+    );
+  });
+
+  it("loads an adjustment transaction for product classification", async () => {
+    process.env.PADDLE_API_KEY = "pdl_test_key";
+    process.env.PADDLE_PRICE_ID = "pri_klipt";
+    process.env.PADDLE_API_BASE = "https://api.paddle.test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          custom_data: { product: "klipt_macos_lifetime" },
+          items: [{ price: { id: "pri_klipt" } }],
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const transaction = await getPaddleTransaction("txn_1");
+
+    expect(isKliptTransaction(transaction, "pri_klipt")).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.paddle.test/transactions/txn_1",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+  });
+
+  it("retries classification when Paddle cannot load a transaction", async () => {
+    process.env.PADDLE_API_KEY = "pdl_test_key";
+    process.env.PADDLE_PRICE_ID = "pri_klipt";
+    process.env.PADDLE_API_BASE = "https://api.paddle.test";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+
+    await expect(getPaddleTransaction("txn_1")).rejects.toThrow(
+      "Paddle transaction request failed (503)",
+    );
   });
 });

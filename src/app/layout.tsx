@@ -5,7 +5,7 @@ import { PostHogProvider } from "@/components/posthog-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://klipt.dev"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://www.klipt.dev"),
   title: { default: "Klipt — Everything you copy, ready.", template: "%s · Klipt" },
   description: "A fast, private clipboard history and snippets app for Apple Silicon Macs.",
   openGraph: {

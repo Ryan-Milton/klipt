@@ -34,7 +34,9 @@ fulfillment, activation, and release publishing require the following setup.
 - Set the default payment-link domain and checkout approval for `klipt.dev`.
 - Use `https://sandbox-api.paddle.com` for sandbox `PADDLE_API_BASE`, and
   `https://api.paddle.com` for production.
-- Set the webhook destination to `https://klipt.dev/api/paddle/webhook` and
+- Restrict the Paddle API key to customer read and transaction read permissions;
+  no write permission is required.
+- Set the webhook destination to `https://www.klipt.dev/api/paddle/webhook` and
   subscribe to transaction completion plus the refund, adjustment, dispute,
   and chargeback events available in the account.
 - Confirm live payloads against the stored sanitized event view before launch.
@@ -52,7 +54,7 @@ fulfillment, activation, and release publishing require the following setup.
 ## 5. Admin OAuth
 
 - Create a GitHub OAuth app with callback
-  `https://klipt.dev/api/auth/callback/github`.
+  `https://www.klipt.dev/api/auth/callback/github`.
 - Set `ADMIN_GITHUB_USER_ID` to the numeric GitHub user ID for `Ryan-Milton`,
   not the username. All other accounts are rejected.
 - Verify the admin action audit table records note, resend, retry, revoke, and

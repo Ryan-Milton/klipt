@@ -214,7 +214,7 @@ jobs:
             -H "Authorization: Bearer $RELEASE_PUBLISH_TOKEN" \
             -H 'Content-Type: application/json' \
             -d "{\"version\":\"$VERSION\",\"build\":\"$BUILD_NUMBER\",\"r2ObjectKey\":\"releases/Klipt-$VERSION-$BUILD_NUMBER.dmg\",\"sha256\":\"$SHA256\",\"sizeBytes\":$SIZE_BYTES}" \
-            https://klipt.dev/api/admin/releases
+            https://www.klipt.dev/api/admin/releases
 
       - name: Create draft GitHub release
         env:
