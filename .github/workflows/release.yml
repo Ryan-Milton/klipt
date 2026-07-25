@@ -180,6 +180,7 @@ jobs:
             "$UPDATE_ZIP" \
             "$ARTIFACT_PATH/appcast.xml"
           "$SIGN_TOOL" --ed-key-file "$RUNNER_TEMP/sparkle-private-key" "$ARTIFACT_PATH/appcast.xml" >/dev/null
+          # Appcast XML embeds its signature; Sparkle rejects a separate signature argument for feeds.
           "$SIGN_TOOL" --ed-key-file "$RUNNER_TEMP/sparkle-private-key" --verify "$ARTIFACT_PATH/appcast.xml"
 
       - name: Upload immutable artifacts to R2
