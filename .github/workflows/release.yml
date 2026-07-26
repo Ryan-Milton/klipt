@@ -31,7 +31,7 @@ jobs:
             echo "::error::Production releases must be dispatched from main."
             exit 1
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Test
@@ -57,7 +57,7 @@ jobs:
       EXPORT_PATH: /tmp/KliptExport
       ARTIFACT_PATH: /tmp/KliptArtifacts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -130,6 +130,10 @@ jobs:
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$EXPORT_PATH" \
             -exportOptionsPlist scripts/ExportOptions.plist
+          EMBEDDED_LICENSE_API_URL="$(/usr/libexec/PlistBuddy -c 'Print :KliptLicenseAPIBaseURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_LICENSE_API_URL" == "https://www.klipt.dev/api/licenses/" ]]
+          EMBEDDED_FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_FEED_URL" == "https://updates.klipt.dev/appcast.xml" ]]
           EMBEDDED_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
           [[ "$EMBEDDED_PUBLIC_KEY" == "$SPARKLE_PUBLIC_ED_KEY" ]]
           codesign --verify --deep --strict --verbose=2 "$EXPORT_PATH/Klipt.app"

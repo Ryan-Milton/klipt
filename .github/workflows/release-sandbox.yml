@@ -1,0 +1,202 @@
+name: Release Klipt Sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Sandbox marketing version, for example 1.0.0
+        required: true
+        default: 1.0.0
+      build:
+        description: Monotonically increasing sandbox build number
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klipt-sandbox-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: macos-26
+    steps:
+      - name: Validate release ref
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Sandbox releases must be dispatched from main."
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Test
+        run: >-
+          xcodebuild
+          -project Klipt.xcodeproj
+          -scheme Klipt
+          -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath "$RUNNER_TEMP/KliptSandboxTestData"
+          CODE_SIGNING_ALLOWED=NO
+          test
+
+  release:
+    needs: verify
+    runs-on: macos-26
+    environment: sandbox
+    env:
+      VERSION: ${{ inputs.version }}
+      BUILD_NUMBER: ${{ inputs.build }}
+      TEAM_ID: A8S73HH5G6
+      DERIVED_DATA: /tmp/KliptSandboxDerivedData
+      ARCHIVE_PATH: /tmp/KliptSandbox.xcarchive
+      EXPORT_PATH: /tmp/KliptSandboxExport
+      ARTIFACT_PATH: /tmp/KliptSandboxArtifacts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Validate release inputs
+        env:
+          SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+          PRIVATE_BUCKET: ${{ vars.R2_SANDBOX_PRIVATE_BUCKET }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$SANDBOX_APP_URL" == "https://sandbox.klipt.dev" ]]
+          [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]
+          [[ "$PRIVATE_BUCKET" == "klipt-installers-sandbox" ]]
+
+      - name: Import Developer ID certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/klipt-sandbox-signing.keychain-db"
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+      - name: Prepare notarization credentials
+        env:
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$HOME/private_keys" "$ARTIFACT_PATH"
+          printf '%s' "$ASC_KEY_BASE64" | base64 --decode > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Archive and export sandbox build
+        env:
+          SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+        run: |
+          xcodebuild archive \
+            -project Klipt.xcodeproj \
+            -scheme Klipt \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -derivedDataPath "$DERIVED_DATA" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            KLIPT_LICENSE_API_BASE_URL="$SANDBOX_APP_URL/api/licenses/" \
+            KLIPT_SPARKLE_FEED_URL="$SANDBOX_APP_URL/appcast.xml" \
+            SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist scripts/ExportOptions.plist
+          EMBEDDED_API_URL="$(/usr/libexec/PlistBuddy -c 'Print :KliptLicenseAPIBaseURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_API_URL" == "$SANDBOX_APP_URL/api/licenses/" ]]
+          EMBEDDED_FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_FEED_URL" == "$SANDBOX_APP_URL/appcast.xml" ]]
+          EMBEDDED_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_PUBLIC_KEY" == "$SPARKLE_PUBLIC_ED_KEY" ]]
+          codesign --verify --deep --strict --verbose=2 "$EXPORT_PATH/Klipt.app"
+
+      - name: Notarize app and DMG
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          APP_PATH="$EXPORT_PATH/Klipt.app"
+          PRE_NOTARY_ZIP="$RUNNER_TEMP/Klipt-sandbox-notary.zip"
+          DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$PRE_NOTARY_ZIP"
+          xcrun notarytool submit "$PRE_NOTARY_ZIP" \
+            --key "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          mkdir "$RUNNER_TEMP/dmg-root"
+          ditto "$APP_PATH" "$RUNNER_TEMP/dmg-root/Klipt.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
+          hdiutil create -volname Klipt -srcfolder "$RUNNER_TEMP/dmg-root" -ov -format UDZO "$DMG_PATH"
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
+
+      - name: Upload sandbox installer to R2
+        id: installer
+        env:
+          PRIVATE_BUCKET: ${{ vars.R2_SANDBOX_PRIVATE_BUCKET }}
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_SANDBOX_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SANDBOX_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          command -v aws >/dev/null || brew install awscli
+          DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
+          DMG_KEY="releases/Klipt-$VERSION-$BUILD_NUMBER.dmg"
+          SHA256="$(shasum -a 256 "$DMG_PATH" | cut -d ' ' -f 1)"
+          SIZE_BYTES="$(stat -f '%z' "$DMG_PATH")"
+          HEAD_ERROR="$RUNNER_TEMP/sandbox-head-object.error"
+          if aws --endpoint-url "$R2_ENDPOINT" s3api head-object \
+            --bucket "$PRIVATE_BUCKET" \
+            --key "$DMG_KEY" >/dev/null 2>"$HEAD_ERROR"; then
+            echo "::error::Sandbox installer already exists; use a new build number."
+            exit 1
+          elif grep -Eq '\(404\)|Not Found|NoSuchKey' "$HEAD_ERROR"; then
+            aws --endpoint-url "$R2_ENDPOINT" s3 cp \
+              "$DMG_PATH" \
+              "s3://$PRIVATE_BUCKET/$DMG_KEY" \
+              --content-type application/x-apple-diskimage \
+              --metadata "sha256=$SHA256"
+          else
+            cat "$HEAD_ERROR" >&2
+            exit 1
+          fi
+          printf 'sha256=%s\nsize_bytes=%s\n' "$SHA256" "$SIZE_BYTES" >> "$GITHUB_OUTPUT"
+
+      - name: Register current sandbox installer
+        env:
+          SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
+          RELEASE_PUBLISH_TOKEN: ${{ secrets.SANDBOX_RELEASE_PUBLISH_TOKEN }}
+          SHA256: ${{ steps.installer.outputs.sha256 }}
+          SIZE_BYTES: ${{ steps.installer.outputs.size_bytes }}
+        run: |
+          curl --fail-with-body --retry 3 \
+            -H "Authorization: Bearer $RELEASE_PUBLISH_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "{\"version\":\"$VERSION\",\"build\":\"$BUILD_NUMBER\",\"r2ObjectKey\":\"releases/Klipt-$VERSION-$BUILD_NUMBER.dmg\",\"sha256\":\"$SHA256\",\"sizeBytes\":$SIZE_BYTES}" \
+            "$SANDBOX_APP_URL/api/admin/releases"

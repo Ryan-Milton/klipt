@@ -313,6 +313,23 @@ struct LicenseResponseMappingTests {
     }
 }
 
+struct LicenseAPIConfigurationTests {
+    @Test
+    func acceptsOnlyHTTPSLicenseEndpoints() {
+        #expect(
+            LicenseAPIConfiguration.validatedBaseURL("https://www.klipt.dev/api/licenses/")?.absoluteString
+                == "https://www.klipt.dev/api/licenses/"
+        )
+        #expect(
+            LicenseAPIConfiguration.validatedBaseURL("https://sandbox.klipt.dev/api/licenses/")?.absoluteString
+                == "https://sandbox.klipt.dev/api/licenses/"
+        )
+        #expect(LicenseAPIConfiguration.validatedBaseURL("http://sandbox.klipt.dev/api/licenses/") == nil)
+        #expect(LicenseAPIConfiguration.validatedBaseURL("https://sandbox.klipt.dev/api/admin/") == nil)
+        #expect(LicenseAPIConfiguration.validatedBaseURL("https://user@sandbox.klipt.dev/api/licenses/") == nil)
+    }
+}
+
 struct InstallIDStoreTests {
     @Test
     func generatesOnceAndRefreshesStorageAttributes() throws {

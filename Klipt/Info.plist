@@ -22,10 +22,12 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>KliptLicenseAPIBaseURL</key>
+	<string>$(KLIPT_LICENSE_API_BASE_URL)</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://updates.klipt.dev/appcast.xml</string>
+	<string>$(KLIPT_SPARKLE_FEED_URL)</string>
 	<key>SUPublicEDKey</key>
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 	<key>SURequireSignedFeed</key>

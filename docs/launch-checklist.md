@@ -110,6 +110,8 @@ the paid DMG.
 
 ## 8. Final acceptance
 
+- Complete the isolated sandbox flow in `docs/sandbox-pipeline.md` before the
+  first production release or live purchase.
 - Buy in Paddle sandbox and verify one fulfillment email arrives.
 - Redeem the initial link once and verify the resulting R2 URL works for 15
   minutes while the original Klipt link no longer works.

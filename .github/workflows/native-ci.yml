@@ -8,6 +8,7 @@ on:
       - "Klipt.xcodeproj/**"
       - ".github/workflows/native-ci.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-sandbox.yml"
       - "scripts/ExportOptions.plist"
       - "scripts/create-appcast.mjs"
   push:
@@ -18,6 +19,7 @@ on:
       - "Klipt.xcodeproj/**"
       - ".github/workflows/native-ci.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-sandbox.yml"
       - "scripts/ExportOptions.plist"
       - "scripts/create-appcast.mjs"
 
