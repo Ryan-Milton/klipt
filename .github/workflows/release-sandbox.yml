@@ -69,7 +69,7 @@ jobs:
           [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
           [[ "$SANDBOX_APP_URL" == "https://sandbox.klipt.dev" ]]
           [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]
-          [[ -n "$PRIVATE_BUCKET" ]]
+          [[ "$PRIVATE_BUCKET" == "klipt-installers-sandbox" ]]
 
       - name: Import Developer ID certificate
         env:
@@ -112,6 +112,7 @@ jobs:
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             KLIPT_LICENSE_API_BASE_URL="$SANDBOX_APP_URL/api/licenses/" \
+            KLIPT_SPARKLE_FEED_URL="$SANDBOX_APP_URL/appcast.xml" \
             SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
           xcodebuild -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
@@ -119,6 +120,8 @@ jobs:
             -exportOptionsPlist scripts/ExportOptions.plist
           EMBEDDED_API_URL="$(/usr/libexec/PlistBuddy -c 'Print :KliptLicenseAPIBaseURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
           [[ "$EMBEDDED_API_URL" == "$SANDBOX_APP_URL/api/licenses/" ]]
+          EMBEDDED_FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_FEED_URL" == "$SANDBOX_APP_URL/appcast.xml" ]]
           EMBEDDED_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
           [[ "$EMBEDDED_PUBLIC_KEY" == "$SPARKLE_PUBLIC_ED_KEY" ]]
           codesign --verify --deep --strict --verbose=2 "$EXPORT_PATH/Klipt.app"
@@ -154,6 +157,7 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
 
       - name: Upload sandbox installer to R2
+        id: installer
         env:
           PRIVATE_BUCKET: ${{ vars.R2_SANDBOX_PRIVATE_BUCKET }}
           R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
@@ -164,22 +168,33 @@ jobs:
           command -v aws >/dev/null || brew install awscli
           DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
           DMG_KEY="releases/Klipt-$VERSION-$BUILD_NUMBER.dmg"
-          ! aws --endpoint-url "$R2_ENDPOINT" s3api head-object --bucket "$PRIVATE_BUCKET" --key "$DMG_KEY" >/dev/null 2>&1
           SHA256="$(shasum -a 256 "$DMG_PATH" | cut -d ' ' -f 1)"
-          aws --endpoint-url "$R2_ENDPOINT" s3 cp \
-            "$DMG_PATH" \
-            "s3://$PRIVATE_BUCKET/$DMG_KEY" \
-            --content-type application/x-apple-diskimage \
-            --metadata "sha256=$SHA256"
+          SIZE_BYTES="$(stat -f '%z' "$DMG_PATH")"
+          HEAD_ERROR="$RUNNER_TEMP/sandbox-head-object.error"
+          if aws --endpoint-url "$R2_ENDPOINT" s3api head-object \
+            --bucket "$PRIVATE_BUCKET" \
+            --key "$DMG_KEY" >/dev/null 2>"$HEAD_ERROR"; then
+            echo "::error::Sandbox installer already exists; use a new build number."
+            exit 1
+          elif grep -Eq '\(404\)|Not Found|NoSuchKey' "$HEAD_ERROR"; then
+            aws --endpoint-url "$R2_ENDPOINT" s3 cp \
+              "$DMG_PATH" \
+              "s3://$PRIVATE_BUCKET/$DMG_KEY" \
+              --content-type application/x-apple-diskimage \
+              --metadata "sha256=$SHA256"
+          else
+            cat "$HEAD_ERROR" >&2
+            exit 1
+          fi
+          printf 'sha256=%s\nsize_bytes=%s\n' "$SHA256" "$SIZE_BYTES" >> "$GITHUB_OUTPUT"
 
       - name: Register current sandbox installer
         env:
           SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
           RELEASE_PUBLISH_TOKEN: ${{ secrets.SANDBOX_RELEASE_PUBLISH_TOKEN }}
+          SHA256: ${{ steps.installer.outputs.sha256 }}
+          SIZE_BYTES: ${{ steps.installer.outputs.size_bytes }}
         run: |
-          DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
-          SHA256="$(shasum -a 256 "$DMG_PATH" | cut -d ' ' -f 1)"
-          SIZE_BYTES="$(stat -f '%z' "$DMG_PATH")"
           curl --fail-with-body --retry 3 \
             -H "Authorization: Bearer $RELEASE_PUBLISH_TOKEN" \
             -H 'Content-Type: application/json' \

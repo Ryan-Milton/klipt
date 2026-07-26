@@ -678,7 +678,9 @@ the isolated acceptance environment described in `docs/sandbox-pipeline.md`.
 It runs only from `main`, compiles the native licensing URL as
 `https://sandbox.klipt.dev/api/licenses/`, uploads only to the private sandbox
 installer bucket, and registers only with the sandbox web application. It does
-not publish a GitHub Release or modify the production appcast.
+not publish a GitHub Release or modify the production appcast. Its embedded
+Sparkle feed uses the sandbox hostname so it cannot update into a production
+build.
 
 Production and sandbox builds use the same source and bundle ID. Both release
 workflows verify the licensing URL embedded in the exported app before upload.

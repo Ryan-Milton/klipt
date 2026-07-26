@@ -27,7 +27,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://updates.klipt.dev/appcast.xml</string>
+	<string>$(KLIPT_SPARKLE_FEED_URL)</string>
 	<key>SUPublicEDKey</key>
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 	<key>SURequireSignedFeed</key>

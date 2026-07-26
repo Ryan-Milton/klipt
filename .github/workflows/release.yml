@@ -132,6 +132,8 @@ jobs:
             -exportOptionsPlist scripts/ExportOptions.plist
           EMBEDDED_LICENSE_API_URL="$(/usr/libexec/PlistBuddy -c 'Print :KliptLicenseAPIBaseURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
           [[ "$EMBEDDED_LICENSE_API_URL" == "https://www.klipt.dev/api/licenses/" ]]
+          EMBEDDED_FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_FEED_URL" == "https://updates.klipt.dev/appcast.xml" ]]
           EMBEDDED_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
           [[ "$EMBEDDED_PUBLIC_KEY" == "$SPARKLE_PUBLIC_ED_KEY" ]]
           codesign --verify --deep --strict --verbose=2 "$EXPORT_PATH/Klipt.app"

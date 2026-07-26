@@ -20,6 +20,8 @@ Paddle credentials, encryption key, release token, or installer bucket.
 The sandbox app uses the production bundle ID so its signing, Keychain, and
 system-permission behavior match production. Remove existing Klipt state before
 the clean-install test and do not run production and sandbox copies together.
+Its Sparkle feed points to `https://sandbox.klipt.dev/appcast.xml`, which is not
+published by the sandbox workflow, so it cannot update into a production build.
 
 ## Vercel configuration
 
@@ -81,6 +83,33 @@ R2 credential must not have production bucket access.
 8. Deploy `main` to the isolated Vercel project.
 9. Dispatch `Release Klipt Sandbox` from `main`.
 10. Verify one current sandbox release artifact before opening checkout.
+
+If upload succeeds but registration fails, the workflow will refuse to reuse or
+overwrite the immutable object. Inspect the failed run, then issue a new
+sandbox build number after correcting the cause.
+
+## Clean-state reset
+
+The shared bundle ID means this reset removes both development and production
+Klipt state for the current macOS account. Treat the operation as destructive.
+If any existing state must be retained, stop and use a fresh macOS account
+instead.
+
+1. Quit Klipt and disable Launch at Login in Klipt or System Settings.
+2. Confirm `~/Library/Application Support/Klipt` contains no data that must be
+   retained. An archive without the matching Keychain encryption key is not a
+   usable backup.
+3. Remove `/Applications/Klipt.app` and `~/Library/Application Support/Klipt`.
+4. Delete the `com.ryanmilton.Klipt` defaults domain.
+5. Delete these exact generic-password items without printing their values:
+   - service `com.ryanmilton.Klipt.installation`, account `installation-id`
+   - service `com.ryanmilton.Klipt.license`, account `license-key`
+   - service `com.ryanmilton.Klipt.local-storage`, account `encryption-key`
+6. Run `tccutil reset Accessibility com.ryanmilton.Klipt`.
+7. Confirm the app, Application Support directory, defaults domain, and all
+   three Keychain items are absent before downloading the sandbox DMG.
+8. Repeat this reset after sandbox acceptance and before installing the final
+   production build.
 
 ## Payment tests
 
