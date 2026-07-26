@@ -1,34 +1,32 @@
-name: Release Klipt
+name: Release Klipt Sandbox
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Marketing version, for example 1.0.0
+        description: Sandbox marketing version, for example 1.0.0
         required: true
         default: 1.0.0
       build:
-        description: Monotonically increasing build number
+        description: Monotonically increasing sandbox build number
         required: true
         default: "1"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: klipt-production-release
+  group: klipt-sandbox-release
   cancel-in-progress: false
 
 jobs:
   verify:
     runs-on: macos-26
-    permissions:
-      contents: read
     steps:
       - name: Validate release ref
         run: |
           if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "::error::Production releases must be dispatched from main."
+            echo "::error::Sandbox releases must be dispatched from main."
             exit 1
           fi
       - uses: actions/checkout@v4
@@ -40,43 +38,38 @@ jobs:
           -project Klipt.xcodeproj
           -scheme Klipt
           -destination 'platform=macOS,arch=arm64'
-          -derivedDataPath "$RUNNER_TEMP/KliptTestData"
+          -derivedDataPath "$RUNNER_TEMP/KliptSandboxTestData"
           CODE_SIGNING_ALLOWED=NO
           test
 
   release:
     needs: verify
     runs-on: macos-26
-    environment: production
+    environment: sandbox
     env:
       VERSION: ${{ inputs.version }}
       BUILD_NUMBER: ${{ inputs.build }}
       TEAM_ID: A8S73HH5G6
-      DERIVED_DATA: /tmp/KliptDerivedData
-      ARCHIVE_PATH: /tmp/Klipt.xcarchive
-      EXPORT_PATH: /tmp/KliptExport
-      ARTIFACT_PATH: /tmp/KliptArtifacts
+      DERIVED_DATA: /tmp/KliptSandboxDerivedData
+      ARCHIVE_PATH: /tmp/KliptSandbox.xcarchive
+      EXPORT_PATH: /tmp/KliptSandboxExport
+      ARTIFACT_PATH: /tmp/KliptSandboxArtifacts
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - name: Validate release inputs
         env:
+          SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
           SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
-          PRIVATE_BUCKET: ${{ vars.R2_PRIVATE_BUCKET }}
-          UPDATES_BUCKET: ${{ vars.R2_UPDATES_BUCKET }}
+          PRIVATE_BUCKET: ${{ vars.R2_SANDBOX_PRIVATE_BUCKET }}
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$SANDBOX_APP_URL" == "https://sandbox.klipt.dev" ]]
           [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]
           [[ -n "$PRIVATE_BUCKET" ]]
-          [[ -n "$UPDATES_BUCKET" ]]
 
       - name: Import Developer ID certificate
         env:
@@ -85,7 +78,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/klipt-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/klipt-sandbox-signing.keychain-db"
           printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -94,27 +87,20 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH"
 
-      - name: Prepare notarization and Sparkle credentials
+      - name: Prepare notarization credentials
         env:
           ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          SPARKLE_PRIVATE_KEY_BASE64: ${{ secrets.SPARKLE_PRIVATE_KEY_BASE64 }}
         run: |
           mkdir -p "$HOME/private_keys" "$ARTIFACT_PATH"
           printf '%s' "$ASC_KEY_BASE64" | base64 --decode > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          printf '%s' "$SPARKLE_PRIVATE_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/sparkle-private-key"
-          chmod 600 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" "$RUNNER_TEMP/sparkle-private-key"
+          chmod 600 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
-      - name: Archive and export
+      - name: Archive and export sandbox build
         env:
+          SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
           SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
         run: |
-          xcodebuild -resolvePackageDependencies -project Klipt.xcodeproj -scheme Klipt -derivedDataPath "$DERIVED_DATA"
-          GENERATE_KEYS="$(find "$DERIVED_DATA/SourcePackages" -type f -path '*/Sparkle/bin/generate_keys' -perm +111 -print -quit)"
-          [[ -x "$GENERATE_KEYS" ]]
-          "$GENERATE_KEYS" -f "$RUNNER_TEMP/sparkle-private-key"
-          DERIVED_PUBLIC_KEY="$("$GENERATE_KEYS" -p)"
-          [[ "$DERIVED_PUBLIC_KEY" == "$SPARKLE_PUBLIC_ED_KEY" ]]
           xcodebuild archive \
             -project Klipt.xcodeproj \
             -scheme Klipt \
@@ -125,25 +111,25 @@ jobs:
             DEVELOPMENT_TEAM="$TEAM_ID" \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            KLIPT_LICENSE_API_BASE_URL="$SANDBOX_APP_URL/api/licenses/" \
             SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
           xcodebuild -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$EXPORT_PATH" \
             -exportOptionsPlist scripts/ExportOptions.plist
-          EMBEDDED_LICENSE_API_URL="$(/usr/libexec/PlistBuddy -c 'Print :KliptLicenseAPIBaseURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
-          [[ "$EMBEDDED_LICENSE_API_URL" == "https://www.klipt.dev/api/licenses/" ]]
+          EMBEDDED_API_URL="$(/usr/libexec/PlistBuddy -c 'Print :KliptLicenseAPIBaseURL' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
+          [[ "$EMBEDDED_API_URL" == "$SANDBOX_APP_URL/api/licenses/" ]]
           EMBEDDED_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$EXPORT_PATH/Klipt.app/Contents/Info.plist")"
           [[ "$EMBEDDED_PUBLIC_KEY" == "$SPARKLE_PUBLIC_ED_KEY" ]]
           codesign --verify --deep --strict --verbose=2 "$EXPORT_PATH/Klipt.app"
 
-      - name: Notarize app and package artifacts
+      - name: Notarize app and DMG
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           APP_PATH="$EXPORT_PATH/Klipt.app"
-          PRE_NOTARY_ZIP="$RUNNER_TEMP/Klipt-notary.zip"
-          UPDATE_ZIP="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.zip"
+          PRE_NOTARY_ZIP="$RUNNER_TEMP/Klipt-sandbox-notary.zip"
           DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$PRE_NOTARY_ZIP"
           xcrun notarytool submit "$PRE_NOTARY_ZIP" \
@@ -153,7 +139,6 @@ jobs:
             --wait
           xcrun stapler staple "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$UPDATE_ZIP"
           mkdir "$RUNNER_TEMP/dmg-root"
           ditto "$APP_PATH" "$RUNNER_TEMP/dmg-root/Klipt.app"
           ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
@@ -168,54 +153,29 @@ jobs:
           spctl --assess --type execute --verbose=2 "$APP_PATH"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
 
-      - name: Sign Sparkle update and create appcast
-        run: |
-          UPDATE_ZIP="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.zip"
-          SIGN_TOOL="$(find "$DERIVED_DATA/SourcePackages" -type f -path '*/Sparkle/bin/sign_update' -perm +111 -print -quit)"
-          [[ -x "$SIGN_TOOL" ]]
-          SPARKLE_SIGNATURE="$($SIGN_TOOL --ed-key-file "$RUNNER_TEMP/sparkle-private-key" "$UPDATE_ZIP")"
-          export SPARKLE_SIGNATURE
-          node scripts/create-appcast.mjs \
-            "$VERSION" \
-            "$BUILD_NUMBER" \
-            "https://updates.klipt.dev/Klipt-$VERSION-$BUILD_NUMBER.zip" \
-            "$UPDATE_ZIP" \
-            "$ARTIFACT_PATH/appcast.xml"
-          "$SIGN_TOOL" --ed-key-file "$RUNNER_TEMP/sparkle-private-key" "$ARTIFACT_PATH/appcast.xml" >/dev/null
-          # Appcast XML embeds its signature; Sparkle rejects a separate signature argument for feeds.
-          "$SIGN_TOOL" --ed-key-file "$RUNNER_TEMP/sparkle-private-key" --verify "$ARTIFACT_PATH/appcast.xml"
-
-      - name: Upload immutable artifacts to R2
+      - name: Upload sandbox installer to R2
         env:
-          PRIVATE_BUCKET: ${{ vars.R2_PRIVATE_BUCKET }}
-          UPDATES_BUCKET: ${{ vars.R2_UPDATES_BUCKET }}
+          PRIVATE_BUCKET: ${{ vars.R2_SANDBOX_PRIVATE_BUCKET }}
           R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_SANDBOX_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SANDBOX_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
           command -v aws >/dev/null || brew install awscli
           DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
-          UPDATE_ZIP="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.zip"
           DMG_KEY="releases/Klipt-$VERSION-$BUILD_NUMBER.dmg"
-          ZIP_KEY="Klipt-$VERSION-$BUILD_NUMBER.zip"
           ! aws --endpoint-url "$R2_ENDPOINT" s3api head-object --bucket "$PRIVATE_BUCKET" --key "$DMG_KEY" >/dev/null 2>&1
-          ! aws --endpoint-url "$R2_ENDPOINT" s3api head-object --bucket "$UPDATES_BUCKET" --key "$ZIP_KEY" >/dev/null 2>&1
           SHA256="$(shasum -a 256 "$DMG_PATH" | cut -d ' ' -f 1)"
           aws --endpoint-url "$R2_ENDPOINT" s3 cp \
             "$DMG_PATH" \
             "s3://$PRIVATE_BUCKET/$DMG_KEY" \
             --content-type application/x-apple-diskimage \
             --metadata "sha256=$SHA256"
-          aws --endpoint-url "$R2_ENDPOINT" s3 cp \
-            "$UPDATE_ZIP" \
-            "s3://$UPDATES_BUCKET/$ZIP_KEY" \
-            --content-type application/zip \
-            --cache-control 'public,max-age=31536000,immutable'
 
-      - name: Register current installer
+      - name: Register current sandbox installer
         env:
-          RELEASE_PUBLISH_TOKEN: ${{ secrets.RELEASE_PUBLISH_TOKEN }}
+          SANDBOX_APP_URL: ${{ vars.SANDBOX_APP_URL }}
+          RELEASE_PUBLISH_TOKEN: ${{ secrets.SANDBOX_RELEASE_PUBLISH_TOKEN }}
         run: |
           DMG_PATH="$ARTIFACT_PATH/Klipt-$VERSION-$BUILD_NUMBER.dmg"
           SHA256="$(shasum -a 256 "$DMG_PATH" | cut -d ' ' -f 1)"
@@ -224,33 +184,4 @@ jobs:
             -H "Authorization: Bearer $RELEASE_PUBLISH_TOKEN" \
             -H 'Content-Type: application/json' \
             -d "{\"version\":\"$VERSION\",\"build\":\"$BUILD_NUMBER\",\"r2ObjectKey\":\"releases/Klipt-$VERSION-$BUILD_NUMBER.dmg\",\"sha256\":\"$SHA256\",\"sizeBytes\":$SIZE_BYTES}" \
-            https://www.klipt.dev/api/admin/releases
-
-      - name: Create draft GitHub release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "v$VERSION-build.$BUILD_NUMBER"
-          --target "$GITHUB_SHA"
-          --title "Klipt $VERSION ($BUILD_NUMBER)"
-          --draft
-          --generate-notes
-
-      - name: Publish signed appcast
-        env:
-          UPDATES_BUCKET: ${{ vars.R2_UPDATES_BUCKET }}
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-        run: |
-          aws --endpoint-url "$R2_ENDPOINT" s3 cp \
-            "$ARTIFACT_PATH/appcast.xml" \
-            "s3://$UPDATES_BUCKET/appcast.xml" \
-            --content-type application/xml \
-            --cache-control 'no-cache'
-
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "v$VERSION-build.$BUILD_NUMBER" --draft=false
+            "$SANDBOX_APP_URL/api/admin/releases"

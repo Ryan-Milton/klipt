@@ -176,11 +176,40 @@ protocol LicenseAPIClient: Sendable {
     func validate(_ request: LicenseAPIRequest) async throws -> LicenseServerResult
 }
 
+enum LicenseAPIConfiguration {
+    static let infoKey = "KliptLicenseAPIBaseURL"
+
+    static func validatedBaseURL(_ value: String?) -> URL? {
+        guard
+            let value,
+            let components = URLComponents(string: value),
+            components.scheme == "https",
+            components.host != nil,
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil,
+            components.path == "/api/licenses/",
+            let url = components.url
+        else { return nil }
+        return url
+    }
+
+    static func bundleBaseURL(bundle: Bundle = .main) -> URL {
+        let value = bundle.object(forInfoDictionaryKey: infoKey) as? String
+        guard let url = validatedBaseURL(value) else {
+            preconditionFailure("KliptLicenseAPIBaseURL must be a valid HTTPS /api/licenses/ URL")
+        }
+        return url
+    }
+}
+
 final class FirstPartyLicenseAPI: LicenseAPIClient, @unchecked Sendable {
-    private let baseURL = URL(string: "https://www.klipt.dev/api/licenses/")!
+    private let baseURL: URL
     private let session: URLSession
 
-    init(session: URLSession? = nil) {
+    init(session: URLSession? = nil, baseURL: URL? = nil) {
+        self.baseURL = baseURL ?? LicenseAPIConfiguration.bundleBaseURL()
         if let session {
             self.session = session
         } else {
