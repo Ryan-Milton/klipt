@@ -160,6 +160,11 @@ jobs:
           ditto "$APP_PATH" "$RUNNER_TEMP/dmg-root/Klipt.app"
           ln -s /Applications "$RUNNER_TEMP/dmg-root/Applications"
           hdiutil create -volname Klipt -srcfolder "$RUNNER_TEMP/dmg-root" -ov -format UDZO "$DMG_PATH"
+          xattr -cr "$DMG_PATH"
+          codesign --force --timestamp \
+            --sign "Developer ID Application: Ryan Milton ($TEAM_ID)" \
+            "$DMG_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
           xcrun notarytool submit "$DMG_PATH" \
             --key "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
             --key-id "$ASC_KEY_ID" \
