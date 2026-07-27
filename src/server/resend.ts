@@ -13,7 +13,7 @@ type Mail = {
   subject: string;
   html: string;
   text: string;
-  kind: "fulfillment" | "account-link";
+  kind: "fulfillment" | "test-license" | "account-link";
   idempotencyKey?: string;
 };
 
@@ -53,7 +53,23 @@ export async function sendTrackedEmail(mail: Mail) {
   }
 }
 
-export function fulfillmentEmail(licenseKey: string, token: string) {
+type LicenseEmailCopy = {
+  subject: string;
+  preheader: string;
+  label: string;
+  heading: string;
+  headingText: string;
+  intro: string;
+  keyBackground: string;
+  buttonBackground: string;
+  buttonLabel: string;
+  noticeTitle: string;
+  notice: string;
+  footer: string;
+  footerText: string;
+};
+
+function licenseEmail(licenseKey: string, token: string, copy: LicenseEmailCopy) {
   const appUrl = env.resend().NEXT_PUBLIC_APP_URL;
   const downloadUrl = new URL(`/download/${encodeURIComponent(token)}`, appUrl).toString();
   const safeLicenseKey = licenseKey
@@ -63,11 +79,11 @@ export function fulfillmentEmail(licenseKey: string, token: string) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
   return {
-    subject: "Your Klipt license and download",
+    subject: copy.subject,
     html: `<!doctype html>
 <html lang="en">
   <body style="margin:0;background:#f5efd9;color:#20241f;font-family:'Avenir Next','SF Pro Rounded',Arial,sans-serif;">
-    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your Klipt license and one-use installer link are ready.</div>
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${copy.preheader}</div>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5efd9;">
       <tr>
         <td align="center" style="padding:32px 16px;">
@@ -83,14 +99,14 @@ export function fulfillmentEmail(licenseKey: string, token: string) {
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                   <tr>
                     <td style="padding:36px 36px 20px;">
-                      <p style="margin:0 0 14px;font-family:'SFMono-Regular',Consolas,monospace;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#63665d;">Purchase / Ready</p>
-                      <h1 style="margin:0 0 18px;font-family:Georgia,serif;font-size:42px;line-height:1.05;font-weight:400;letter-spacing:-1.5px;">Everything you copy,<br>ready.</h1>
-                      <p style="margin:0;font-size:16px;line-height:1.65;color:#484d45;">Thanks for buying Klipt. Your one-Mac license and installer are below.</p>
+                      <p style="margin:0 0 14px;font-family:'SFMono-Regular',Consolas,monospace;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#63665d;">${copy.label}</p>
+                      <h1 style="margin:0 0 18px;font-family:Georgia,serif;font-size:42px;line-height:1.05;font-weight:400;letter-spacing:-1.5px;">${copy.heading}</h1>
+                      <p style="margin:0;font-size:16px;line-height:1.65;color:#484d45;">${copy.intro}</p>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding:0 36px 22px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:2px solid #20241f;border-radius:5px;background:#c9e86c;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:2px solid #20241f;border-radius:5px;background:${copy.keyBackground};">
                         <tr>
                           <td style="padding:19px 20px;">
                             <p style="margin:0 0 8px;font-family:'SFMono-Regular',Consolas,monospace;font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;">Klipt license key</p>
@@ -102,14 +118,14 @@ export function fulfillmentEmail(licenseKey: string, token: string) {
                   </tr>
                   <tr>
                     <td style="padding:0 36px 26px;">
-                      <a href="${downloadUrl}" style="display:inline-block;padding:14px 22px;border:2px solid #20241f;border-radius:5px;background:#ff806d;color:#20241f;box-shadow:4px 4px 0 #20241f;font-size:15px;font-weight:800;text-decoration:none;">Download Klipt once</a>
+                      <a href="${downloadUrl}" style="display:inline-block;padding:14px 22px;border:2px solid #20241f;border-radius:5px;background:${copy.buttonBackground};color:#20241f;box-shadow:4px 4px 0 #20241f;font-size:15px;font-weight:800;text-decoration:none;">${copy.buttonLabel}</a>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding:0 36px 36px;">
                       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-left:5px solid #70d9e7;background:#eef9f7;">
                         <tr>
-                          <td style="padding:14px 16px;font-size:13px;line-height:1.6;color:#484d45;"><strong style="color:#20241f;">Keep both safe.</strong> The installer link works once. One license activates one Mac and cannot be transferred or recovered after installer redemption.</td>
+                          <td style="padding:14px 16px;font-size:13px;line-height:1.6;color:#484d45;"><strong style="color:#20241f;">${copy.noticeTitle}</strong> ${copy.notice}</td>
                         </tr>
                       </table>
                     </td>
@@ -119,7 +135,7 @@ export function fulfillmentEmail(licenseKey: string, token: string) {
             </tr>
             <tr>
               <td style="padding:22px 8px 0;font-size:12px;line-height:1.6;color:#63665d;">
-                Klipt for Mac &middot; One-time purchase &middot; Lifetime updates<br>
+                ${copy.footer}<br>
                 Need help? <a href="${appUrl}/support" style="color:#20241f;font-weight:700;">Visit Klipt support</a>.
               </td>
             </tr>
@@ -129,19 +145,61 @@ export function fulfillmentEmail(licenseKey: string, token: string) {
     </table>
   </body>
 </html>`,
-    text: `Everything you copy, ready.
+    text: `${copy.headingText}
 
-Thanks for buying Klipt. Your one-Mac license key:
+${copy.intro}
+
+Your Klipt license key:
 
 ${licenseKey}
 
-Download Klipt once:
+${copy.buttonLabel}:
 ${downloadUrl}
 
-Keep both safe. The installer link works once. One license activates one Mac and cannot be transferred or recovered after installer redemption.
+${copy.noticeTitle} ${copy.notice}
 
+${copy.footerText}
 Klipt support: ${appUrl}/support`,
   };
+}
+
+export function fulfillmentEmail(licenseKey: string, token: string) {
+  return licenseEmail(licenseKey, token, {
+    subject: "Your Klipt license and download",
+    preheader: "Your Klipt license and one-use installer link are ready.",
+    label: "Purchase / Ready",
+    heading: "Everything you copy,<br>ready.",
+    headingText: "Everything you copy, ready.",
+    intro: "Thanks for buying Klipt. Your one-Mac license and installer are below.",
+    keyBackground: "#c9e86c",
+    buttonBackground: "#ff806d",
+    buttonLabel: "Download Klipt once",
+    noticeTitle: "Keep both safe.",
+    notice:
+      "The installer link works once. One license activates one Mac and cannot be transferred or recovered after installer redemption.",
+    footer: "Klipt for Mac &middot; One-time purchase &middot; Lifetime updates",
+    footerText: "Klipt for Mac - One-time purchase - Lifetime updates\n",
+  });
+}
+
+export function testLicenseEmail(licenseKey: string, token: string) {
+  return licenseEmail(licenseKey, token, {
+    subject: "Your Klipt test license",
+    preheader: "Your complimentary Klipt test license and one-use installer are ready.",
+    label: "Test crew / Access granted",
+    heading: "You&rsquo;re on the<br>test crew.",
+    headingText: "You're on the test crew.",
+    intro:
+      "Thanks for helping test Klipt. Your complimentary one-Mac license and installer are below.",
+    keyBackground: "#70d9e7",
+    buttonBackground: "#c9e86c",
+    buttonLabel: "Download Klipt to test",
+    noticeTitle: "A tester's field note.",
+    notice:
+      "The installer link works once, so keep the DMG and license key safe. Reply to this email when something feels rough or unexpectedly delightful.",
+    footer: "Klipt test crew &middot; Complimentary license &middot; One Mac",
+    footerText: "Klipt test crew - Complimentary license - One Mac\n",
+  });
 }
 
 export function accountLinkEmail(token: string) {

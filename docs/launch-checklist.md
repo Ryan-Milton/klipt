@@ -113,6 +113,8 @@ the paid DMG.
 - Complete the isolated sandbox flow in `docs/sandbox-pipeline.md` before the
   first production release or live purchase.
 - Buy in Paddle sandbox and verify one fulfillment email arrives.
+- Issue a direct admin test license and verify its distinct test-crew email,
+  null transaction, one active license, and one unused grant.
 - Redeem the initial link once and verify the resulting R2 URL works for 15
   minutes while the original Klipt link no longer works.
 - Activate the same key twice on the same installation and verify idempotency.

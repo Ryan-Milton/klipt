@@ -1,9 +1,9 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getDb } from "@/db/client";
-import { downloadGrants, releaseArtifacts } from "@/db/schema";
+import { downloadGrants, licenses, releaseArtifacts } from "@/db/schema";
 import { hashSecret } from "@/server/crypto";
 import { createPrivateDownloadUrl } from "@/server/r2";
 
@@ -25,9 +25,14 @@ export async function POST(request: Request) {
     const [candidate] = await db
       .select({ id: downloadGrants.id, objectKey: releaseArtifacts.r2ObjectKey })
       .from(downloadGrants)
+      .innerJoin(licenses, eq(licenses.id, downloadGrants.licenseId))
       .innerJoin(releaseArtifacts, eq(releaseArtifacts.id, downloadGrants.artifactId))
       .where(
-        and(eq(downloadGrants.tokenHash, hashSecret(parsed.data)), isNull(downloadGrants.usedAt)),
+        and(
+          eq(downloadGrants.tokenHash, hashSecret(parsed.data)),
+          isNull(downloadGrants.usedAt),
+          eq(licenses.status, "active"),
+        ),
       )
       .limit(1);
     if (!candidate) {
@@ -37,7 +42,18 @@ export async function POST(request: Request) {
     const [consumed] = await db
       .update(downloadGrants)
       .set({ usedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(downloadGrants.id, candidate.id), isNull(downloadGrants.usedAt)))
+      .where(
+        and(
+          eq(downloadGrants.id, candidate.id),
+          eq(downloadGrants.tokenHash, hashSecret(parsed.data)),
+          isNull(downloadGrants.usedAt),
+          sql`EXISTS (
+            SELECT 1 FROM ${licenses}
+            WHERE ${licenses.id} = ${downloadGrants.licenseId}
+              AND ${licenses.status} = 'active'
+          )`,
+        ),
+      )
       .returning({ id: downloadGrants.id });
     if (!consumed) {
       return NextResponse.redirect(new URL("/download?state=unavailable", request.url), 303);

@@ -25,7 +25,7 @@ Recheck those facts after provider-side changes.
 | Apex site            | `https://klipt.dev`, redirects to `www`                |
 | Web host             | Vercel                                                 |
 | DNS                  | Cloudflare authoritative DNS                           |
-| Database             | Neon PostgreSQL with Drizzle migrations through `0005` |
+| Database             | Neon PostgreSQL with Drizzle migrations through `0006` |
 | Payments             | Paddle Billing, dedicated Klipt account                |
 | Private installers   | Cloudflare R2, `klipt-installers`                      |
 | Public updates       | Cloudflare R2, `klipt-updates` at `updates.klipt.dev`  |
@@ -38,7 +38,7 @@ Recheck those facts after provider-side changes.
 | Release automation   | Manual GitHub Actions workflow                         |
 | First native release | Not published yet                                      |
 
-Production database migrations `0004` and `0005` were applied before the
+Production database migrations `0004` through `0006` were applied before the
 first purchase. The production release registry currently has no current
 artifact, so checkout must not be promoted until the first signed release is
 registered.
@@ -212,7 +212,7 @@ limiter, or automated webhook recovery worker.
 | ---------------------- | -------------------------------------------------------- |
 | `customers`            | Normalized email and Paddle customer ID                  |
 | `transactions`         | Paddle transaction and ordered payment state             |
-| `licenses`             | Encrypted license, hash, and ordered entitlement state   |
+| `licenses`             | Encrypted license, origin, hash, and entitlement state   |
 | `activations`          | One-Mac installation claim and validation metadata       |
 | `release_artifacts`    | Immutable installer metadata and current release pointer |
 | `download_grants`      | Encrypted/hashed one-use installer token                 |
@@ -230,11 +230,13 @@ limiter, or automated webhook recovery worker.
 | `transaction_status` | `completed`, `refunded`, `disputed` |
 | `webhook_status`     | `pending`, `processed`, `failed`    |
 | `email_status`       | `pending`, `sent`, `failed`         |
+| `license_origin`     | `paddle`, `admin`                   |
 
 ### Important Constraints
 
 - Paddle transaction IDs are unique.
 - A transaction produces at most one license.
+- Paddle licenses require a transaction; admin-issued licenses prohibit one.
 - A license has at most one activation.
 - A license has at most one download grant.
 - Release version/build pairs are unique.
@@ -251,6 +253,7 @@ limiter, or automated webhook recovery worker.
 | `0003_early_starfox`       | Recoverable encrypted download token    |
 | `0004_crazy_maelstrom`     | Transaction status occurrence timestamp |
 | `0005_clear_lake`          | License status occurrence timestamp     |
+| `0006_admin_test_licenses` | First-class admin-issued test licenses  |
 
 Migrations `0004` and `0005` were applied to production while transaction and
 license tables were empty. Future non-null migrations must use an
@@ -438,6 +441,7 @@ currently documented or managed in code.
 Resend sends:
 
 - Fulfillment email with license and installer link.
+- Distinct test-crew email for directly issued admin licenses.
 - Customer account-link email.
 - Admin-triggered unused-grant reissue email.
 
@@ -516,20 +520,22 @@ The admin console shows recent licenses, transactions, activations, download
 grants, webhooks, email attempts, notes, and audit rows. It can:
 
 - Add internal notes.
+- Issue one active test license and one-use installer grant directly to an email.
 - Revoke a license manually with a reason.
 - Restore only an eligible manual revocation.
 - Reissue an unused installer grant and email.
 - Retry a failed webhook through an atomic processing claim.
 
-Admin audit rows record that an action was attempted. They do not currently
-record a separate success/failure outcome.
+Most admin audit rows record that an action was attempted. Direct issuance is
+created atomically with the license and records an `issued` outcome.
 
 ### Customer Sessions
 
 Customer account access does not use Auth.js. A one-use 15-minute email token
 creates a signed 15-minute customer cookie scoped to `/account`. The account
-view masks the email and license key but displays the transaction ID, purchase
-date, device details, and installer-grant status.
+view masks the email and license key but displays the entitlement origin,
+transaction details when applicable, issue date, device details, and
+installer-grant status.
 
 ## Native macOS Application
 

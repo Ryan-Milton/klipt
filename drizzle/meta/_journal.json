@@ -43,6 +43,13 @@
       "when": 1784944133215,
       "tag": "0005_clear_lake",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785192640743,
+      "tag": "0006_admin_test_licenses",
+      "breakpoints": true
     }
   ]
 }

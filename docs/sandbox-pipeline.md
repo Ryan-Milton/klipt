@@ -73,7 +73,7 @@ R2 credential must not have production bucket access.
 
 1. Add `sandbox.klipt.dev` to the isolated Vercel project.
 2. Publish the required DNS record through Cloudflare and wait for TLS.
-3. Apply Drizzle migrations through `0005` to the empty sandbox database.
+3. Apply Drizzle migrations through `0006` to the empty sandbox database.
 4. Create the Paddle sandbox product and price.
 5. Configure Paddle checkout for `sandbox.klipt.dev`.
 6. Create a webhook for
