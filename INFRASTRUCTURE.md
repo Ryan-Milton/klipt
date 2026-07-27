@@ -26,7 +26,7 @@ Recheck those facts after provider-side changes.
 | Web host             | Vercel                                                 |
 | DNS                  | Cloudflare authoritative DNS                           |
 | Database             | Neon PostgreSQL with Drizzle migrations through `0005` |
-| Payments             | Paddle Billing, shared account with Knosys             |
+| Payments             | Paddle Billing, dedicated Klipt account                |
 | Private installers   | Cloudflare R2, `klipt-installers`                      |
 | Public updates       | Cloudflare R2, `klipt-updates` at `updates.klipt.dev`  |
 | Transactional email  | Resend                                                 |
@@ -272,9 +272,9 @@ settings and are not configured in code. Required operating policy:
 
 ### Account Model
 
-Klipt and Knosys share one Paddle account but use separate products and prices.
-Paddle customer directories, reporting, seller identity, and selected webhook
-event streams are account-wide.
+Klipt uses a dedicated Paddle account. Sandbox and production have separate
+products, prices, client tokens, API keys, webhook destinations, and endpoint
+secrets.
 
 Klipt's entitlement classifier requires both:
 
@@ -891,7 +891,7 @@ Workflow:
 
 Do not delete webhook rows to force a retry.
 
-### Shared Paddle Classification Failure
+### Paddle Classification Failure
 
 For `inconsistent Klipt product metadata`:
 

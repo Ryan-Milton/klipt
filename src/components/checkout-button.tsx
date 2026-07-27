@@ -52,11 +52,7 @@ export function CheckoutButton({ compact = false }: { compact?: boolean }) {
         onClick={checkout}
         disabled={state === "loading"}
       >
-        {state === "loading"
-          ? "Opening Paddle…"
-          : compact
-            ? "Get Klipt · $5"
-            : "Buy Klipt for US$5"}
+        {state === "loading" ? "Opening Paddle…" : compact ? "Get Klipt · $5" : "Buy Klipt for $5"}
       </button>
       {state === "error" && (
         <span className="form-error">Checkout is unavailable. Try again shortly.</span>
