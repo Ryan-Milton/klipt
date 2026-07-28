@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -21,7 +21,7 @@ import {
   hashSecret,
 } from "@/server/crypto";
 import { type PaddleEvent } from "@/server/paddle";
-import { fulfillmentEmail, sendTrackedEmail } from "@/server/resend";
+import { fulfillmentEmail, sendTrackedEmail, testLicenseEmail } from "@/server/resend";
 import { processWebhookEvent } from "@/server/webhooks";
 
 export const runtime = "nodejs";
@@ -38,48 +38,79 @@ const actionSchema = z.discriminatedUnion("action", [
     licenseId: z.uuid(),
     body: z.string().trim().min(1).max(2000),
   }),
-  z.object({ action: z.literal("resend"), licenseId: z.uuid() }),
+  z.object({
+    action: z.literal("resend"),
+    licenseId: z.uuid(),
+    grantTokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
   z.object({ action: z.literal("retry"), webhookId: z.uuid() }),
 ]);
 
-async function reissueUnusedGrant(licenseId: string) {
+async function reissueUnusedGrant(licenseId: string, grantTokenHash: string) {
   const db = getDb();
-  const [license] = await db.select().from(licenses).where(eq(licenses.id, licenseId)).limit(1);
-  if (!license) throw new Error("License not found");
-  const [grant] = await db
-    .select()
-    .from(downloadGrants)
-    .where(and(eq(downloadGrants.licenseId, licenseId), isNull(downloadGrants.usedAt)))
-    .limit(1);
-  if (!grant) throw new Error("Initial download was used; reissue is not permitted");
-  const [customer] = await db
-    .select()
-    .from(customers)
-    .where(eq(customers.id, license.customerId))
-    .limit(1);
-  const [artifact] = await db
-    .select({ id: releaseArtifacts.id })
-    .from(releaseArtifacts)
-    .where(eq(releaseArtifacts.isCurrent, true))
-    .limit(1);
-  if (!customer || !artifact) throw new Error("Customer or current artifact is missing");
   const token = generateOpaqueToken();
-  await db
-    .update(downloadGrants)
-    .set({
-      tokenHash: hashSecret(token),
-      encryptedToken: encryptDownloadToken(token),
-      artifactId: artifact.id,
-      reissuedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(downloadGrants.id, grant.id));
+  const result = await db.transaction(async (tx) => {
+    const [license] = await tx
+      .select()
+      .from(licenses)
+      .where(eq(licenses.id, licenseId))
+      .limit(1)
+      .for("update");
+    if (!license) throw new Error("License not found");
+    if (license.status !== "active") throw new Error("Only active licenses can be reissued");
+    const [grant] = await tx
+      .select()
+      .from(downloadGrants)
+      .where(
+        and(
+          eq(downloadGrants.licenseId, licenseId),
+          eq(downloadGrants.tokenHash, grantTokenHash),
+          isNull(downloadGrants.usedAt),
+        ),
+      )
+      .limit(1);
+    if (!grant) throw new Error("Grant changed or was used; refresh before reissuing");
+    const [customer] = await tx
+      .select()
+      .from(customers)
+      .where(eq(customers.id, license.customerId))
+      .limit(1);
+    const [artifact] = await tx
+      .select({ id: releaseArtifacts.id })
+      .from(releaseArtifacts)
+      .where(eq(releaseArtifacts.isCurrent, true))
+      .limit(1);
+    if (!customer || !artifact) throw new Error("Customer or current artifact is missing");
+    const [rotated] = await tx
+      .update(downloadGrants)
+      .set({
+        tokenHash: hashSecret(token),
+        encryptedToken: encryptDownloadToken(token),
+        artifactId: artifact.id,
+        reissuedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(downloadGrants.id, grant.id),
+          eq(downloadGrants.tokenHash, grantTokenHash),
+          isNull(downloadGrants.usedAt),
+        ),
+      )
+      .returning({ id: downloadGrants.id });
+    if (!rotated) throw new Error("Grant changed or was used; refresh before reissuing");
+    return { customer, license };
+  });
+  const mail =
+    result.license.origin === "admin"
+      ? testLicenseEmail(decryptLicenseKey(result.license.encryptedKey), token)
+      : fulfillmentEmail(decryptLicenseKey(result.license.encryptedKey), token);
   await sendTrackedEmail({
-    customerId: customer.id,
-    to: customer.email,
-    kind: "fulfillment",
-    idempotencyKey: `fulfillment-reissue-${hashSecret(token)}`,
-    ...fulfillmentEmail(decryptLicenseKey(license.encryptedKey), token),
+    customerId: result.customer.id,
+    to: result.customer.email,
+    kind: result.license.origin === "admin" ? "test-license" : "fulfillment",
+    idempotencyKey: `${result.license.origin === "admin" ? "test-license" : "fulfillment"}-reissue-${hashSecret(token)}`,
+    ...mail,
   });
 }
 
@@ -120,17 +151,37 @@ export async function POST(request: Request) {
         .where(eq(licenses.id, input.licenseId));
     } else if (input.action === "unrevoke") {
       const [licenseState] = await db
-        .select({ transactionStatus: transactions.status, reason: licenses.revokedReason })
+        .select({
+          origin: licenses.origin,
+          customerId: licenses.customerId,
+          transactionStatus: transactions.status,
+          reason: licenses.revokedReason,
+        })
         .from(licenses)
-        .innerJoin(transactions, eq(transactions.id, licenses.transactionId))
+        .leftJoin(transactions, eq(transactions.id, licenses.transactionId))
         .where(eq(licenses.id, input.licenseId))
         .limit(1);
       if (
         !licenseState ||
-        licenseState.transactionStatus !== "completed" ||
+        (licenseState.origin === "paddle" && licenseState.transactionStatus !== "completed") ||
         licenseState.reason === "Paddle dispute or chargeback"
       ) {
         throw new Error("Paddle-refunded or disputed licenses cannot be restored manually");
+      }
+      if (licenseState.origin === "admin") {
+        const [otherActive] = await db
+          .select({ id: licenses.id })
+          .from(licenses)
+          .where(
+            and(
+              eq(licenses.customerId, licenseState.customerId),
+              eq(licenses.origin, "admin"),
+              eq(licenses.status, "active"),
+              ne(licenses.id, input.licenseId),
+            ),
+          )
+          .limit(1);
+        if (otherActive) throw new Error("Customer already has another active test license");
       }
       const [changed] = await db
         .update(licenses)
@@ -150,7 +201,7 @@ export async function POST(request: Request) {
         body: input.body,
       });
     } else if (input.action === "resend") {
-      await reissueUnusedGrant(input.licenseId);
+      await reissueUnusedGrant(input.licenseId, input.grantTokenHash);
     } else {
       const claimStartedAt = new Date();
       const [webhook] = await db

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -26,6 +27,7 @@ export const transactionStatus = pgEnum("transaction_status", [
 ]);
 export const webhookStatus = pgEnum("webhook_status", ["pending", "processed", "failed"]);
 export const emailStatus = pgEnum("email_status", ["pending", "sent", "failed"]);
+export const licenseOrigin = pgEnum("license_origin", ["paddle", "admin"]);
 
 export const customers = pgTable(
   "customers",
@@ -66,9 +68,8 @@ export const licenses = pgTable(
     customerId: uuid("customer_id")
       .notNull()
       .references(() => customers.id),
-    transactionId: uuid("transaction_id")
-      .notNull()
-      .references(() => transactions.id),
+    transactionId: uuid("transaction_id").references(() => transactions.id),
+    origin: licenseOrigin("origin").notNull().default("paddle"),
     keyHash: text("key_hash").notNull(),
     encryptedKey: text("encrypted_key").notNull(),
     status: licenseStatus("status").notNull().default("active"),
@@ -79,7 +80,14 @@ export const licenses = pgTable(
   (table) => [
     uniqueIndex("licenses_key_hash_unique").on(table.keyHash),
     uniqueIndex("licenses_transaction_unique").on(table.transactionId),
+    uniqueIndex("licenses_active_admin_customer_unique")
+      .on(table.customerId)
+      .where(sql`${table.origin} = 'admin' AND ${table.status} = 'active'`),
     index("licenses_customer_idx").on(table.customerId),
+    check(
+      "licenses_origin_transaction_check",
+      sql`(${table.origin} = 'paddle' AND ${table.transactionId} IS NOT NULL) OR (${table.origin} = 'admin' AND ${table.transactionId} IS NULL)`,
+    ),
   ],
 );
 

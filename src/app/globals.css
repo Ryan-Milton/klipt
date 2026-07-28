@@ -1067,6 +1067,46 @@ button {
   padding: 10px;
   background: var(--cyan);
 }
+.admin-issue {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(360px, 1.15fr);
+  align-items: center;
+  gap: 55px;
+}
+.admin-issue > div > p:first-child {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+.admin-issue h1 {
+  margin: 8px 0 12px;
+}
+.admin-issue > div > p:last-child {
+  max-width: 560px;
+  color: var(--muted);
+}
+.admin-issue form {
+  padding: 22px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  border: 2px solid var(--ink);
+  background: var(--cyan);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+.admin-issue label {
+  grid-column: 1 / -1;
+  font-weight: 800;
+}
+.admin-issue input {
+  min-height: 42px;
+  background: var(--paper);
+}
+.admin-issue button {
+  min-height: 42px;
+  background: var(--pear);
+}
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1276,6 +1316,10 @@ button {
   .admin-grid {
     grid-template-columns: 1fr;
   }
+  .admin-issue {
+    grid-template-columns: 1fr;
+    gap: 25px;
+  }
 }
 
 @media (max-width: 650px) {
@@ -1437,6 +1481,9 @@ button {
   }
   .admin > header > div > span {
     display: none;
+  }
+  .admin-issue form {
+    grid-template-columns: 1fr;
   }
 }
 

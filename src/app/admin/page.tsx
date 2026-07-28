@@ -66,6 +66,7 @@ export default async function AdminPage({
         id: licenses.id,
         status: licenses.status,
         encryptedKey: licenses.encryptedKey,
+        origin: licenses.origin,
         email: customers.email,
         createdAt: licenses.createdAt,
         revokedReason: licenses.revokedReason,
@@ -119,12 +120,35 @@ export default async function AdminPage({
         </p>
       )}
       <nav>
+        <a href="#issue">Issue</a>
         <a href="#licenses">Licenses</a>
         <a href="#transactions">Transactions</a>
         <a href="#webhooks">Webhooks</a>
         <a href="#delivery">Delivery</a>
         <a href="#audit">Audit</a>
       </nav>
+      <section className="admin-issue" id="issue">
+        <div>
+          <p>TEST CREW / DIRECT ACCESS</p>
+          <h1>Issue a test license.</h1>
+          <p>
+            Creates a complimentary one-Mac license and emails a one-use installer link. Existing
+            test users should use Reissue + email on their license instead.
+          </p>
+        </div>
+        <form action="/api/admin/licenses" method="post">
+          <label htmlFor="test-license-email">Tester email</label>
+          <input
+            id="test-license-email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            placeholder="tester@example.com"
+            required
+          />
+          <button>Issue license + email</button>
+        </form>
+      </section>
       <section id="licenses">
         <h1>
           Licenses <span>{licenseRows.length} recent</span>
@@ -136,7 +160,9 @@ export default async function AdminPage({
             return (
               <article key={license.id} className={`admin-license ${license.status}`}>
                 <div>
-                  <b>{license.status}</b>
+                  <b>
+                    {license.origin === "admin" ? "TEST" : "PURCHASE"} · {license.status}
+                  </b>
                   <code>{maskLicenseKey(decryptLicenseKey(license.encryptedKey))}</code>
                 </div>
                 <p>
@@ -170,10 +196,11 @@ export default async function AdminPage({
                       <button>Unrevoke</button>
                     </form>
                   )}
-                  {grant && !grant.usedAt && (
+                  {license.status === "active" && grant && !grant.usedAt && (
                     <form action="/api/admin/action" method="post">
                       <input type="hidden" name="action" value="resend" />
                       <input type="hidden" name="licenseId" value={license.id} />
+                      <input type="hidden" name="grantTokenHash" value={grant.tokenHash} />
                       <button>Reissue + email</button>
                     </form>
                   )}

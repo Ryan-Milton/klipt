@@ -37,14 +37,16 @@ export default async function AccountDetailsPage() {
       status: licenses.status,
       encryptedKey: licenses.encryptedKey,
       licenseId: licenses.id,
+      origin: licenses.origin,
       transactionId: transactions.paddleTransactionId,
       purchasedAt: transactions.occurredAt,
+      issuedAt: licenses.createdAt,
     })
     .from(customers)
     .innerJoin(licenses, eq(licenses.customerId, customers.id))
-    .innerJoin(transactions, eq(transactions.id, licenses.transactionId))
+    .leftJoin(transactions, eq(transactions.id, licenses.transactionId))
     .where(eq(customers.id, customerId))
-    .orderBy(desc(transactions.occurredAt));
+    .orderBy(desc(licenses.createdAt));
   if (records.length === 0) return unavailable();
   const purchases = await Promise.all(
     records.map(async (record) => {
@@ -63,19 +65,27 @@ export default async function AccountDetailsPage() {
     <main className="account-detail shell">
       {purchases.map(({ record, activation, grant }) => (
         <section className="account-receipt" key={record.licenseId}>
-          <p>KLIPT PURCHASE</p>
+          <p>{record.origin === "admin" ? "KLIPT TEST LICENSE" : "KLIPT PURCHASE"}</p>
           <h1>{record.status}</h1>
           <dl>
-            <dt>Purchase email</dt>
+            <dt>{record.origin === "admin" ? "Tester email" : "Purchase email"}</dt>
             <dd>{record.email.replace(/^(.{2}).*(@.*)$/, "$1••••$2")}</dd>
             <dt>License</dt>
             <dd>
               <code>{maskLicenseKey(decryptLicenseKey(record.encryptedKey))}</code>
             </dd>
-            <dt>Transaction</dt>
-            <dd>{record.transactionId}</dd>
-            <dt>Purchased</dt>
-            <dd>{record.purchasedAt.toLocaleDateString("en-US", { dateStyle: "medium" })}</dd>
+            {record.transactionId && (
+              <>
+                <dt>Transaction</dt>
+                <dd>{record.transactionId}</dd>
+              </>
+            )}
+            <dt>{record.origin === "admin" ? "Issued" : "Purchased"}</dt>
+            <dd>
+              {(record.purchasedAt ?? record.issuedAt).toLocaleDateString("en-US", {
+                dateStyle: "medium",
+              })}
+            </dd>
             <dt>Mac</dt>
             <dd>
               {activation ? `${activation.nickname} · ${activation.deviceModel}` : "Not activated"}
